@@ -17,9 +17,9 @@ Details of each program and usage example is available by typing in the command 
 
 [3] Department of Environmental Sciences, Federal University of Sao Carlos (UFSCar)
 
-'Support: CNPq [206246/2014-5] and FAPESP [2018/09900-8]
+'Support: CNPq [206246/2014-5] and FAPESP [2018/09900-8], Brazil
 
-''Support: CNPq [] and FAPESP []
+''Support: FAPESP [17/17224-0] and CNPq [310976/2017-0], Brazil
 
 This package is available as is, without any warranty. Use it at your own risk.
 
