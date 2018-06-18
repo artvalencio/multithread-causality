@@ -11,11 +11,11 @@ Details of each program and usage example is available by typing in the command 
 
 (C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[1,3]'' and Dr Murilo S. Baptista[1]
 
-[1] ICSMB, University of Aberdeen
+[1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen
 
-[2] RIDC NeuroMat
+[2] Research, Innovation and Dissemination Center for Neuromathematics (RIDC NeuroMat)
 
-[3] Department of Environmental Sciences, Federal University of Sao Carlos
+[3] Department of Environmental Sciences, Federal University of Sao Carlos (UFSCar)
 
 'Support: CNPq [206246/2014-5] and FAPESP [2018/09900-8]
 
