@@ -24,6 +24,9 @@ Details of each program and usage example is available by typing in the command 
 This package is available as is, without any warranty. Use it at your own risk.
 
 ---------------------------------------------------
+Version update: 18 June 2018
+
+---------------------------------------------------
 
 If useful, please cite:
 
