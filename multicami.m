@@ -1,4 +1,5 @@
-function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(cause,effect,L_past,L_fut,cause_part,effect_part,tau,units,varargin)
+function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,errcami,errmutual_info,errte]...
+    = multicami(cause,effect,L_past,L_fut,cause_part,effect_part,tau,units,varargin)
 % MULTICAMI Calculates the Causal Mutual Information (CaMI), Mutual Information,
 % Transfer Entropy, Directionality Index and Pointwise Information Measures 
 % when many parallel experiments are provided
@@ -51,6 +52,9 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(
 %           te_xy:   Transfer Entropy x -> y
 %           te_yx:   Transfer Entropy y -> x
 %           pointwise: Struct with pointwise information measures
+%           errcami: Confidence margins of the Causal Mutual Information
+%           errmutual_info: Confidence margins of the Mutual Information
+%           errte: Confidence margins of the Transfer Entropy
 %
 %           if 'save': 
 %                  The file "calculations.mat" is generated containing
@@ -63,7 +67,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(
 %
 %     (i)  Case on Bianco-Martinez, E. and Baptista, M.S. (arXiv:1612.05023):
 %
-%         [cami_xy,cami_yx,mi,diridx,te_xy,te_yx,pointwise] = multicami(x,y,2,3,0.5,0.5,1,'nats');
+%         [cami_xy,cami_yx,mi,diridx,te_xy,te_yx,pointwise,errcami,errmutual_info,errte] = multicami(x,y,2,3,0.5,0.5,1,'nats');
 %
 %           (In the paper x and y are single column time-series from coupled logistic maps, 
 %            with r=4 and alpha=0.09. I suggest trying with more columns (parallel experiments),
@@ -72,7 +76,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(
 %     (ii) A case with 3 initial divisions (not necessarily in same positions), 
 %          2 points of past->2points of future, and high lag (tau=8):
 %
-%         [cami_xy,cami_yx,mi,diridx,te_xy,te_yx] = multicami(x,y,2,2,[0.2,0.6],[0.2,0.8],8,'bits');
+%         [cami_xy,cami_yx,mi,diridx,te_xy,te_yx,~,errcami,errmutual_info,errte] = multicami(x,y,2,2,[0.2,0.6],[0.2,0.8],8,'bits');
 %
 %--------------------------------------------------------
 %(C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[1,3]'' and Dr Murilo S. Baptista[1]
@@ -83,9 +87,11 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(
 %''Support: FAPESP [17/17224-0] and CNPq [310976/2017-0], Brazil
 %This package is available as is, without any warranty. Use it at your own risk.
 %--------------------------------------------------------
-%Version update: 18 June 2018
+%Version update: 19 June 2018
 %--------------------------------------------------------
-%If useful please cite references on Readme file
+%If useful please cite
+%(1) Arthur Valencio. An information-theoretical approach to identify seismic precursors and earthquake-causing variables. PhD thesis, University of Aberdeen, 2018. Available at: http://digitool.abdn.ac.uk:1801/webclient/DeliveryManager?pid=237105&custom_att_2=simple_viewer
+%(2) Arthur Valencio, Norma Valencio and Murilo S. Baptista. Multithread causality: causality toolbox for systems observed through many short parallel experiments. Open source codes for Matlab. 2018. Available at: https://github.com/artvalencio/multithread-causality/
 
 
 %Below is the preamble. For the important parts, go to 'main' function.
@@ -124,27 +130,46 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = multicami(
     %adjusting if delayed option
     if delay~=0
         if delay>0
-            effect=effect(1:length(cause)-delay);
-            cause=cause(1:length(effect));
+            effect=effect(1:length(cause(:,1))-delay);
+            cause=cause(1:length(effect(:,1)));
         elseif delay<0
-            cause=cause(1:length(effect)+delay);
-            effect=effect(1:length(cause));
+            cause=cause(1:length(effect(:,1))+delay);
+            effect=effect(1:length(cause(:,1)));
         end
     end
        
     if islocal   %Calculates for sliding window case ('local' measures (in time))
         t=1;
         while 1
-            xwindow=cause(t:t+windowsize);
-            ywindow=effect(t:t+windowsize);
+            xwindow=cause(t:t+windowsize,:);
+            ywindow=effect(t:t+windowsize,:);
             [cami_xy(t),cami_yx(t),mutual_info(t),diridx(t),te_xy(t),te_yx(t),pointwise{t}] = main(xwindow,ywindow,lx,ly,cause_part,effect_part,tau,units,ns,print);
-            if t+windowsize==length(cause)
+            if t+windowsize==length(cause(:,1))
                 break;
             end
             t=t+1;
         end
     else %Calculation over the whole time-series ('global' measures)
+        disp('Calculating')
         [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,print);
+        %confidence margins
+        maxruns=floor(1e9/(length(cause(:,1))*length(cause(1,:))))+10;
+        disp(strcat('Calculating confidence margins (due to ', num2str(maxruns),' random runs)'))
+        for run=1:maxruns
+            fprintf(strcat(num2str(run), ', '));
+            nnodes=length(cause(1,:));
+            tslen=length(cause(:,1));
+            errcause=rand([nnodes,tslen]);
+            erreffect=rand([nnodes,tslen]);
+            [terrcami(run),terrmutual_info(run),terrte(run)] = calcconfidence(errcause,erreffect,lx,ly,cause_part,effect_part,tau,units,ns);
+        end
+        errcami=max(terrcami(run));
+        errmutual_info=max(terrmutual_info(run));
+        errte=max(terrte(run));
+        if print
+            printbottom(errcami,errmutual_info,errte,maxruns)
+        end
+        disp('done')
     end
     
 end
@@ -155,36 +180,35 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     tslen=length(x(:,1));
     xpartlen=length(xpart);
     ypartlen=length(ypart);
-
     %calculating symbols
-    for k=1:nnodes
+    Sx(1:tslen,1:nnodes)=-1;
+    Sy(1:tslen,1:nnodes)=-1;
+    for node=1:nnodes
         for n=1:tslen %assign data points to partition symbols in x
-            Sx(n,k)=-1;
             for i=1:xpartlen
-                if x(n)<xpart(i)
-                    Sx(n,k)=i-1;
+                if x(n,node)<xpart(i)
+                    Sx(n,node)=i-1;
                     break;
                 end
             end
-            if Sx(n,k)==-1
-                Sx(n,k)=ns-1;
+            if Sx(n,node)==-1
+                Sx(n,node)=ns-1;
             end
         end
     end
-    for k=1:nnodes
+    for node=1:nnodes
         for n=1:tslen %assign data points to partition symbols in y
-            Sy(n,k)=-1;
             for i=1:ypartlen
-                if y(n)<ypart(i)
-                    Sy(n,k)=i-1;
+                if y(n,node)<ypart(i)
+                    Sy(n,node)=i-1;
                     break;
                 end
             end
-            if Sy(n,k)==-1
-                Sy(n,k)=ns-1;
+            if Sy(n,node)==-1
+                Sy(n,node)=ns-1;
             end
         end
-    end
+    end  
     
     [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes);
         
@@ -288,20 +312,6 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
         dlmwrite('output.txt',strcat('- Mutual Information of X and Y: ',num2str(mutual_info)),'delimiter','','-append');
         dlmwrite('output.txt',strcat('- Transfer Entropy X->Y: ',num2str(te_xy)),'delimiter','','-append');
         dlmwrite('output.txt',strcat('- Transfer Entropy Y->X: ',num2str(te_yx)),'delimiter','','-append');
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','**Probability boxes and timeseries can be seen in calculations.mat**','delimiter','','-append');
-        dlmwrite('output.txt','**Timeseries and box assignment can also be seen in timeseries.txt**','delimiter','','-append');
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','(C) Dr Arthur Valencio[1,2]*, Dr Norma Valencio[1,3]** and Dr Murilo S. Baptista[1]','delimiter','','-append');       
-        dlmwrite('output.txt','[1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen','delimiter','','-append');
-        dlmwrite('output.txt','[2] Research, Innovation and Dissemination Center for Neuromathematics (RIDC NeuroMat)','delimiter','','-append');
-        dlmwrite('output.txt','[3] Department of Environmental Sciences, Federal University of Sao Carlos (UFSCar)','delimiter','','-append');
-        dlmwrite('output.txt','*Support: CNPq [206246/2014-5] and FAPESP [2018/09900-8], Brazil','delimiter','','-append');
-        dlmwrite('output.txt','**Support: FAPESP [17/17224-0] and CNPq [310976/2017-0], Brazil','delimiter','','-append');
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','Version update: 18 June 2018','delimiter','','-append');
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','If useful, please cite references on Readme file','delimiter','','-append');
         initialparameters=table;
         initialparameters.resolution=ns;
         initialparameters.symbol_x_length=lx;
@@ -315,6 +325,7 @@ end
 
 function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes)
 % calculates the values of phi and probabilities used for CaMI and mutual information
+
 
     %initializing phi: removing points out-of-reach (start-end)
     phi_x(1:tau*lx,1:nnodes)=NaN;
@@ -331,7 +342,7 @@ function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilitie
     p_xyp(1:ns^lx+1,1:ns^lx+1)=0;
     p_xypf(1:ns^lx+1,1:ns^lx+1,1:1:ns^(ly-lx)+1)=0;
     %calculating phi_x, about the past of x
-    for node=1:nnodes
+    for node=1:nnodes(1)
         for n=tau*lx+1:tslen-tau*(ly-lx)
             phi_x(n,node)=0;
             k=n-lx;%running index for sum over tau-spaced elements
@@ -380,4 +391,107 @@ function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilitie
     p_ypf=p_ypf/sum(sum(p_ypf));
     p_xyp=p_xyp/sum(sum(p_xyp));
     p_xypf=p_xypf/sum(sum(sum(p_xypf)));
+end
+
+function [cami_xy,mutual_info,te_xy] = calcconfidence(x,y,lx,ly,xpart,ypart,tau,units,ns)
+    
+    nnodes=length(x(1,:));
+    tslen=length(x(:,1));
+    xpartlen=length(xpart);
+    ypartlen=length(ypart);
+    %calculating symbols
+    Sx(1:tslen,1:nnodes)=-1;
+    Sy(1:tslen,1:nnodes)=-1;
+    for node=1:nnodes
+        for n=1:tslen %assign data points to partition symbols in x
+            for i=1:xpartlen
+                if x(n,node)<xpart(i)
+                    Sx(n,node)=i-1;
+                    break;
+                end
+            end
+            if Sx(n,node)==-1
+                Sx(n,node)=ns-1;
+            end
+        end
+    end
+    for node=1:nnodes
+        for n=1:tslen %assign data points to partition symbols in y
+            for i=1:ypartlen
+                if y(n,node)<ypart(i)
+                    Sy(n,node)=i-1;
+                    break;
+                end
+            end
+            if Sy(n,node)==-1
+                Sy(n,node)=ns-1;
+            end
+        end
+    end  
+    
+    [p_xp,p_yp,~,p_ypf,p_xyp,p_xypf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes);
+        
+    %Calculating mutual information
+    mutual_info=0;
+    for i=1:ns^lx
+        for j=1:ns^lx
+            if (p_xp(i)*p_yp(j)>1e-14)&&(p_xyp(i,j)>1e-14)
+                pmi(i,j)=p_xyp(i,j)*log(p_xyp(i,j)/(p_xp(i)*p_yp(j)));
+                mutual_info=mutual_info+pmi(i,j);
+            else
+                pmi(i,j)=0;
+            end
+        end
+    end
+    
+    %Calculating CaMI X->Y
+    cami_xy=0;
+    for i=1:ns^lx
+        for j=1:ns^lx
+            for k=1:1:ns^(ly-lx)
+                if (p_xp(i)*p_ypf(j,k)>1e-14) && (p_xypf(i,j,k)>1e-14)
+                    pcami_xy(i,j,k)=p_xypf(i,j,k)*log(p_xypf(i,j,k)/(p_xp(i)*p_ypf(j,k)));
+                    cami_xy=cami_xy+pcami_xy(i,j,k);
+                else
+                    pcami_xy(i,j,k)=0;
+                end
+            end
+        end
+    end
+        
+    %Adjusting units
+    if strcmp(units,'nats')==0
+        mutual_info=mutual_info/log(2);
+        cami_xy=cami_xy/log(2);
+    end
+
+    %Obtaining remaining outputs
+    te_xy=cami_xy-mutual_info;
+
+end
+
+%print final part
+function []=printbottom(errcami,errmutual_info,errte,maxrun)
+    dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
+    dlmwrite('output.txt','Confidence margins:','delimiter','','-append');
+    dlmwrite('output.txt',strcat('- Number of runs of random numbers (for confidence levels):', num2str(maxrun)),'delimiter','','-append');
+    dlmwrite('output.txt',strcat('- CaMI: ',num2str(errcami)),'delimiter','','-append');
+    dlmwrite('output.txt',strcat('- Mutual Information: ',num2str(errmutual_info)),'delimiter','','-append');
+    dlmwrite('output.txt',strcat('- Transfer Entropy: ',num2str(errte)),'delimiter','','-append');
+    dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
+    dlmwrite('output.txt','**Probability boxes and timeseries can be seen in calculations.mat**','delimiter','','-append');
+    dlmwrite('output.txt','**Timeseries and box assignment can also be seen in timeseries.txt**','delimiter','','-append');
+    dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
+    dlmwrite('output.txt','(C) Dr Arthur Valencio[1,2]*, Dr Norma Valencio[1,3]** and Dr Murilo S. Baptista[1]','delimiter','','-append');       
+    dlmwrite('output.txt','[1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen','delimiter','','-append');
+    dlmwrite('output.txt','[2] Research, Innovation and Dissemination Center for Neuromathematics (RIDC NeuroMat)','delimiter','','-append');
+    dlmwrite('output.txt','[3] Department of Environmental Sciences, Federal University of Sao Carlos (UFSCar)','delimiter','','-append');
+    dlmwrite('output.txt','*Support: CNPq [206246/2014-5] and FAPESP [2018/09900-8], Brazil','delimiter','','-append');
+    dlmwrite('output.txt','**Support: FAPESP [17/17224-0] and CNPq [310976/2017-0], Brazil','delimiter','','-append');
+    dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
+    dlmwrite('output.txt','Version update: 18 June 2018','delimiter','','-append');
+    dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
+    dlmwrite('output.txt','If useful, please cite:','delimiter','','-append');
+    dlmwrite('output.txt','(1) Arthur Valencio. An information-theoretical approach to identify seismic precursors and earthquake-causing variables. PhD thesis, University of Aberdeen, 2018. Available at: http://digitool.abdn.ac.uk:1801/webclient/DeliveryManager?pid=237105&custom_att_2=simple_viewer','delimiter','','-append');
+    dlmwrite('output.txt','(2) Arthur Valencio, Norma Valencio and Murilo S. Baptista. Multithread causality: causality toolbox for systems observed through many short parallel experiments. Open source codes for Matlab. 2018. Available at: https://github.com/artvalencio/multithread-causality/','delimiter','','-append');
 end
