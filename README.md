@@ -9,6 +9,24 @@ Details of each program and usage example is available by typing in the command 
 
 --------------------------------------------------
 
+*When to use Multithread Causality?
+
+When you are investigating the dynamics of a phenomena you may: (i) have a very long time-series of the observations of this phenomena, or (ii) have lots of small observations taken independently. The original Causality Toolbox was developed for the first case. The Multithread Causality tool addresses the second. Furthermore, the Multithread Causality is backward compatible, i.e., it can also be used for one single (long) observation of the cause/effect variables.
+
+*What do the results mean?
+
+The outcomes are the following information-theoretical values: Causal Mutual Information, Mutual Information, Transfer Entropy and Directionality Index (equivalent to a Net Transfer Entropy). Mathematical details can be seen in the references provided below.
+
+Additionally, the Pointwise Information Measures, i.e. the contribution that each region of the phase-space gives to the information-theoretical values, is provided. This permits identifying, e.g., if a specific interval of values is responsible for the causation between the variables.
+
+The values express the global information-theoretical values for the universe of observations provided.
+
+*What is the confidence margin?
+
+The confidence margin is a reference given by artificial [0,1] uncorrelated uniform pseudo-random distributions with the same size of the inputs. In principle all the information-theoretical values should yield zero in this case, but it doesn't happen in practice due to the limited size of the input and numerical errors in computation. The confidence margins are the largest obtained results from the method (after several runs) when these uncorrelated pseudo-random distributions are adopted as inputs. Only when the values are significantly above the confidence margins the hypothesis can be validated; otherwise there is at most an indication of potential links. 
+
+--------------------------------------------------
+
 (C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[1,3]'' and Dr Murilo S. Baptista[1]
 
 [1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen
