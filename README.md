@@ -42,7 +42,7 @@ The confidence margin is a reference given by artificial [0,1] uncorrelated unif
 This package is available as is, without any warranty. Use it at your own risk.
 
 ---------------------------------------------------
-Version update: 18 June 2018
+Version update: 19 June 2018
 
 ---------------------------------------------------
 
