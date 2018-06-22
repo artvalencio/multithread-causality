@@ -27,7 +27,7 @@ The confidence margin is a reference given by artificial [0,1] uncorrelated unif
 
 --------------------------------------------------
 
-(C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[1,3]'' and Dr Murilo S. Baptista[1]
+(C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[3]'' and Dr Murilo S. Baptista[1]
 
 [1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen
 
