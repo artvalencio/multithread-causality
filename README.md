@@ -5,7 +5,7 @@ Causality toolbox for systems observed through many parallel experiments
 
 
 
-Details of each program and usage example is available by typing in the command window: help [function-name]
+Details of each program and usage example is available by typing in the command window: doc [function-name]
 
 --------------------------------------------------
 
