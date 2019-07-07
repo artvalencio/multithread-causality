@@ -43,7 +43,9 @@ This package is available as is, without any warranty. Use it at your own risk.
 
 ---------------------------------------------------
 Original: 19 June 2018
+
 Version update: 07 July 2019
+
 ---------------------------------------------------
 
 If useful, please cite:
