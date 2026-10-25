@@ -230,45 +230,37 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     pointwise.pte_xy=pcami_xy-pmi;
     pointwise.pte_yx=pcami_yx-pmi;
 
+    %print calculations to file
     if saveoutput
-        timeseries=table;
-        timeseries.x=x;
-        timeseries.y=y;
-        timeseries.Sx=Sx';
-        timeseries.Sy=Sy';
-        timeseries.phi_x=phi_x';
-        timeseries.phi_yp=phi_yp';
-        timeseries.phi_yf=phi_yf';
-        timeseries.inv_phi_y=iphi_x';
-        timeseries.inv_phi_xp=iphi_yp';
-        timeseries.inv_phi_xf=iphi_yf';
-        writetable(timeseries);
-        dlmwrite('output.txt','CaMI calculation (multithread)','delimiter','');
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','Selected parameters by the user:','delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Number of symbols (ns): ',num2str(ns)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Length of symbolic sequence in x (lx): ',num2str(lx)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Length of symbolic sequence in y (ly): ',num2str(ly)),'delimiter','','-append');
-        dlmwrite('output.txt','- Position of partition delimiter lines:','-append','delimiter','');
-        dlmwrite('output.txt','* in x: ','-append','delimiter','');
-        dlmwrite('output.txt',xpart,'delimiter','\t','precision',5,'-append')
-        dlmwrite('output.txt','* in y: ','-append','delimiter','');
-        dlmwrite('output.txt',ypart,'delimiter','\t','precision',5,'-append')
-        dlmwrite('output.txt','-----------------------------------','delimiter','','-append');
-        dlmwrite('output.txt','Output:','delimiter','','-append');
-        dlmwrite('output.txt',strcat('- CaMI X->Y: ',num2str(cami_xy)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- CaMI Y->X: ',num2str(cami_yx)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Directionality Index (CaMI_{X->Y} - CaMI_{Y->X}): ',num2str(diridx)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Mutual Information of X and Y: ',num2str(mutual_info)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Transfer Entropy X->Y: ',num2str(te_xy)),'delimiter','','-append');
-        dlmwrite('output.txt',strcat('- Transfer Entropy Y->X: ',num2str(te_yx)),'delimiter','','-append');
-        initialparameters=table;
-        initialparameters.resolution=ns;
-        initialparameters.symbol_x_length=lx;
-        initialparameters.symbol_y_length=ly;
+        timeseries=struct('x',x,'y',y,'Sx',Sx,'Sy',Sy,'phi_x',phi_x,'phi_yp',phi_yp,'phi_yf',phi_yf,...
+            'inv_phi_y',iphi_x,'inv_phi_xp',iphi_yp,'inv_phi_xf',iphi_yf);
+        initialparameters=struct('resolution',ns,'symbol_x_length',lx,'symbol_y_length',ly,...
+            'x_partition',xpart,'y_partition',ypart,'tau',tau,'units',units);
+        fid=fopen('output.txt','w');
+        fprintf(fid,'CaMI calculation (multithread)\n');
+        fprintf(fid,'-----------------------------------\n');
+        fprintf(fid,'Selected parameters by the user:\n');
+        fprintf(fid,'- Number of symbols (ns): %d\n',ns);
+        fprintf(fid,'- Length of symbolic sequence in x (lx): %d\n',lx);
+        fprintf(fid,'- Length of symbolic sequence in y (ly): %d\n',ly);
+        fprintf(fid,'- Time delay (tau): %d\n',tau);
+        fprintf(fid,'- Position of partition delimiter lines:\n');
+        fprintf(fid,'* in x: %s\n',num2str(xpart(:)',5));
+        fprintf(fid,'* in y: %s\n',num2str(ypart(:)',5));
+        fprintf(fid,'-----------------------------------\n');
+        fprintf(fid,'Output (%s):\n',units);
+        fprintf(fid,'- CaMI X->Y: %.6g\n',cami_xy);
+        fprintf(fid,'- CaMI Y->X: %.6g\n',cami_yx);
+        fprintf(fid,'- Directionality Index (CaMI_{X->Y} - CaMI_{Y->X}): %.6g\n',diridx);
+        fprintf(fid,'- Mutual Information of X and Y: %.6g\n',mutual_info);
+        fprintf(fid,'- Transfer Entropy X->Y: %.6g\n',te_xy);
+        fprintf(fid,'- Transfer Entropy Y->X: %.6g\n',te_yx);
+        fprintf(fid,'-----------------------------------\n');
+        fprintf(fid,'**Probability boxes and timeseries can be seen in calculations.mat**\n');
+        fclose(fid);
         save('calculations.mat','timeseries','initialparameters','cami_xy',...
-            'cami_yx','diridx','mi','te_xy','te_yx','p_xp','p_yp','p_yf','p_ypf',...
-            'p_xyp','p_xypf','ip_x','ip_yp','ip_yf','ip_ypf','ip_xyp','ip_xypf')
+            'cami_yx','diridx','mutual_info','te_xy','te_yx','p_xp','p_yp','p_yf','p_ypf',...
+            'p_xyp','p_xypf','ip_x','ip_yp','ip_yf','ip_ypf','ip_xyp','ip_xypf','-v7');
     end
 end
 
