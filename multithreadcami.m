@@ -99,27 +99,41 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
     ly=L_past+L_fut;
 
     %options
-    print=0;
+    saveoutput=0;
     delay=0;
     islocal=0;
     windowsize=0;
-    if nargin>8
-        for i=1:size(varargin)
-                if strcmp(varargin{i},'save')
-                    print=1;
-                end
-                if strcmp(varargin{i},'delay')
-                    delay=varargin{i+1};
-                end
-                if strcmp(varargin{i},'local')
-                    islocal=1;
-                    windowsize=varargin{i+1};
-                end
+    i=1;
+    while i<=numel(varargin)
+        if ~ischar(varargin{i})
+            error('multithreadcami: unknown option at position %d', i);
         end
+        switch lower(varargin{i})
+            case 'save'
+                saveoutput=1;
+                i=i+1;
+            case 'delay'
+                delay=varargin{i+1};
+                i=i+2;
+            case 'local'
+                islocal=1;
+                windowsize=varargin{i+1};
+                i=i+2;
+            otherwise
+                error('multithreadcami: unknown option "%s"', varargin{i});
+        end
+    end
+    switch lower(units)
+        case {'bit','bits'}
+            units='bits';
+        case {'nat','nats'}
+            units='nats';
+        otherwise
+            error('multithreadcami: units must be ''bits'' or ''nats''');
     end
 
     %check input consistency
-    if size(cause)~=size(effect)
+    if ~isequal(size(cause),size(effect))
         error('x and y must be of same size!')
     end
     if length(cause_part)~=length(effect_part)
@@ -127,23 +141,21 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
     end
     ns=length(cause_part)+1; %partition resolution
 
-    %adjusting if delayed option
-    if delay~=0
-        if delay>0
-            effect=effect(1:length(cause(:,1))-delay,:);
-            cause=cause(1:length(effect(:,1)),:);
-        elseif delay<0
-            cause=cause(1:length(effect(:,1))+delay);
-            effect=effect(1:length(cause(:,1)));
-        end
+    %delay: pair cause(n) with effect(n+delay)
+    if delay>0
+        cause=cause(1:end-delay,:);
+        effect=effect(1+delay:end,:);
+    elseif delay<0
+        cause=cause(1-delay:end,:);
+        effect=effect(1:end+delay,:);
     end
-       
+
     if islocal   %Calculates for sliding window case ('local' measures (in time))
         t=1;
         while 1
             xwindow=cause(t:t+windowsize,:);
             ywindow=effect(t:t+windowsize,:);
-            [cami_xy(t),cami_yx(t),mutual_info(t),diridx(t),te_xy(t),te_yx(t),pointwise{t}] = main(xwindow,ywindow,lx,ly,cause_part,effect_part,tau,units,ns,print);
+            [cami_xy(t),cami_yx(t),mutual_info(t),diridx(t),te_xy(t),te_yx(t),pointwise{t}] = main(xwindow,ywindow,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput);
             if t+windowsize==length(cause(:,1))
                 break;
             end
@@ -152,16 +164,16 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
     else %Calculation over the whole time-series ('global' measures)
         disp('Calculating')
         try
-        fflush(stdout)
+        fflush(stdout);
         catch
         end
-        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,print);
+        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput);
         disp('done')
     end
     
 end
 
-function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,lx,ly,xpart,ypart,tau,units,ns,print)
+function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,lx,ly,xpart,ypart,tau,units,ns,saveoutput)
     
     nnodes=length(x(1,:));
     tslen=length(x(:,1));
@@ -267,7 +279,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     pointwise.pte_yx=pcami_yx-pmi;
     
     %print calculations to file
-    if print
+    if saveoutput
         timeseries=table;
         timeseries.x=x;
         timeseries.y=y;
