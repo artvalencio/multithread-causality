@@ -26,8 +26,8 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
 %                  maximal of mutual information or maximal of CaMI. This 
 %                  strategy seeks to create a time-Poincare mapping that will 
 %                  behave as a Markov system by the partition chosen (lx,ly).
-%           units: 'bits' for log in base 2, 'nats' for log in base e. In
-%                  case of typos, bits are assumed as standard.
+%           units: 'bits' (or 'bit') for log in base 2, 'nats' (or 'nat')
+%                  for log in base e.
 %           varargin: options:
 %               'save': to save the outputs to a file.
 %               'delay', followed by value (integer): to add a delay between x and y.
@@ -39,7 +39,13 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
 %               'local', followed by value (positive integer): to calulate measures 
 %                        over a sliding rectangular window
 %                        (e.g. 'local',10000: gives the measures calculated 
-%                        over a sliding window of 10000 points) 
+%                        over a sliding window of 10000 points)
+%               'step', followed by value (positive integer): with 'local', move
+%                        the window by this many points (default 1)
+%               'parallel', followed by true/false: compute the 'local'
+%                        windows in parallel with parfor (default true;
+%                        runs serially without the Parallel Computing
+%                        Toolbox and in GNU Octave)
 %--------------------------------------------------------
 % Outputs:
 %           cami_xy: Causal Mutual Information x -> y
@@ -103,6 +109,8 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
     delay=0;
     islocal=0;
     windowsize=0;
+    step=1;
+    parallel=true;
     i=1;
     while i<=numel(varargin)
         if ~ischar(varargin{i})
@@ -118,6 +126,12 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
             case 'local'
                 islocal=1;
                 windowsize=varargin{i+1};
+                i=i+2;
+            case 'step'
+                step=varargin{i+1};
+                i=i+2;
+            case 'parallel'
+                parallel=logical(varargin{i+1});
                 i=i+2;
             otherwise
                 error('multithreadcami: unknown option "%s"', varargin{i});
@@ -151,110 +165,48 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise]...
     end
 
     if islocal   %Calculates for sliding window case ('local' measures (in time))
-        t=1;
-        while 1
-            xwindow=cause(t:t+windowsize,:);
-            ywindow=effect(t:t+windowsize,:);
-            [cami_xy(t),cami_yx(t),mutual_info(t),diridx(t),te_xy(t),te_yx(t),pointwise{t}] = main(xwindow,ywindow,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput);
-            if t+windowsize==length(cause(:,1))
-                break;
-            end
-            t=t+1;
+        starts=1:step:size(cause,1)-windowsize;
+        nw=numel(starts);
+        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx]=deal(zeros(1,nw));
+        pointwise=cell(1,nw);
+        if parallel
+            workers=Inf;
+        else
+            workers=0;
+        end
+        parfor (w=1:nw, workers)
+            t=starts(w);
+            [cami_xy(w),cami_yx(w),mutual_info(w),diridx(w),te_xy(w),te_yx(w),pointwise{w}] = ...
+                main(cause(t:t+windowsize,:),effect(t:t+windowsize,:),lx,ly,cause_part,effect_part,tau,units,ns,0);
         end
     else %Calculation over the whole time-series ('global' measures)
         disp('Calculating')
         try
-        fflush(stdout);
+            fflush(stdout);
         catch
         end
         [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput);
         disp('done')
     end
-    
+
 end
 
 function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,lx,ly,xpart,ypart,tau,units,ns,saveoutput)
-    
-    nnodes=length(x(1,:));
-    tslen=length(x(:,1));
-    xpartlen=length(xpart);
-    ypartlen=length(ypart);
-    %calculating symbols
-    Sx(1:tslen,1:nnodes)=-1;
-    Sy(1:tslen,1:nnodes)=-1;
-    parfor node=1:nnodes
-        for n=1:tslen %assign data points to partition symbols in x
-            for i=1:xpartlen
-                if x(n,node)<xpart(i)
-                    Sx(n,node)=i-1;
-                    break;
-                end
-            end
-            if Sx(n,node)==-1
-                Sx(n,node)=ns-1;
-            end
-        end
-    end
-    parfor node=1:nnodes
-        for n=1:tslen %assign data points to partition symbols in y
-            for i=1:ypartlen
-                if y(n,node)<ypart(i)
-                    Sy(n,node)=i-1;
-                    break;
-                end
-            end
-            if Sy(n,node)==-1
-                Sy(n,node)=ns-1;
-            end
-        end
-    end  
-    
+
+    nnodes=size(x,2);
+    tslen=size(x,1);
+    Sx=symbolize(x,xpart);
+    Sy=symbolize(y,ypart);
+
+    %Mutual information and CaMI X->Y
     [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes);
-        
-    %Calculating mutual information
-    mutual_info=0;
-    for i=1:ns^lx
-        for j=1:ns^lx
-            if (p_xp(i)*p_yp(j)>1e-14)&&(p_xyp(i,j)>1e-14)
-                pmi(i,j)=p_xyp(i,j)*log(p_xyp(i,j)/(p_xp(i)*p_yp(j)));
-                mutual_info=mutual_info+pmi(i,j);
-            else
-                pmi(i,j)=0;
-            end
-        end
-    end
-    
-    %Calculating CaMI X->Y
-    cami_xy=0;
-    for i=1:ns^lx
-        for j=1:ns^lx
-            for k=1:1:ns^(ly-lx)
-                if (p_xp(i)*p_ypf(j,k)>1e-14) && (p_xypf(i,j,k)>1e-14)
-                    pcami_xy(i,j,k)=p_xypf(i,j,k)*log(p_xypf(i,j,k)/(p_xp(i)*p_ypf(j,k)));
-                    cami_xy=cami_xy+pcami_xy(i,j,k);
-                else
-                    pcami_xy(i,j,k)=0;
-                end
-            end
-        end
-    end
-    
-    %Calculating CaMI Y->X
+    [mutual_info,pmi]=divergence(p_xyp,p_xp*p_yp');
+    [cami_xy,pcami_xy]=divergence(p_xypf,p_xp.*reshape(p_ypf,[1,size(p_ypf)]));
+
+    %CaMI Y->X
     [ip_x,ip_yp,ip_yf,ip_ypf,ip_xyp,ip_xypf,iphi_x,iphi_yp,iphi_yf]=getprobabilities(Sy,Sx,lx,ly,ns,tau,tslen,nnodes);
-    cami_yx=0;
-    for i=1:ns^lx
-        for j=1:ns^lx
-            for k=1:1:ns^(ly-lx)
-                if (ip_x(i)*ip_ypf(j,k)>1e-14)&&(ip_xypf(i,j,k)>1e-14)
-                    pcami_yx(i,j,k)=ip_xypf(i,j,k)*log(ip_xypf(i,j,k)/(ip_x(i)*ip_ypf(j,k)));
-                    cami_yx=cami_yx+pcami_yx(i,j,k);
-                else
-                    pcami_yx(i,j,k)=0;
-                end
-            end
-        end
-    end
-    
+    [cami_yx,pcami_yx]=divergence(ip_xypf,ip_x.*reshape(ip_ypf,[1,size(ip_ypf)]));
+
     %Adjusting units
     if strcmp(units,'nats')==0
         mutual_info=mutual_info/log(2);
@@ -269,7 +221,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     diridx=cami_xy-cami_yx;
     te_xy=cami_xy-mutual_info;
     te_yx=cami_yx-mutual_info;
-    
+
     %Generating struct of pointwise informational measures
     pointwise.pmi=pmi;
     pointwise.pcami_xy=pcami_xy;
@@ -277,8 +229,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     pointwise.pdiridx=pcami_xy-pcami_yx;
     pointwise.pte_xy=pcami_xy-pmi;
     pointwise.pte_yx=pcami_yx-pmi;
-    
-    %print calculations to file
+
     if saveoutput
         timeseries=table;
         timeseries.x=x;
@@ -322,95 +273,62 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
 end
 
 
+function S=symbolize(data,part)
+% Symbol i-1 is given to values in [part(i-1), part(i)); divisions must be increasing.
+    if any(diff(part(:))<0)
+        error('multithreadcami: partition divisions must be in increasing order');
+    end
+    S=zeros(size(data));
+    for i=1:numel(part)
+        S=S+(data>=part(i));
+    end
+end
+
+
+function [total,terms]=divergence(p_joint,p_indep)
+% sum of p_joint.*log(p_joint./p_indep) over the cells where both are positive (in nats)
+    mask=(p_indep>1e-14)&(p_joint>1e-14);
+    terms=zeros(size(p_joint));
+    terms(mask)=p_joint(mask).*log(p_joint(mask)./p_indep(mask));
+    total=sum(terms(:));
+end
+
+
 function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes)
-% calculates the values of phi and probabilities used for CaMI and mutual information
-
-
-    %initializing phi: removing points out-of-reach (start-end)
-    phi_x(1:tau*lx,1:nnodes)=NaN;
-    phi_yp(1:tau*lx,1:nnodes)=NaN;
-    phi_yf(1:tau*lx,1:nnodes)=NaN;
-    phi_x(tslen-tau*(ly-lx):tslen,1:nnodes)=NaN;
-    phi_yp(tslen-tau*(ly-lx):tslen,1:nnodes)=NaN;
-    phi_yf(tslen-tau*(ly-lx):tslen,1:nnodes)=NaN;
-    %initializing probabilities of boxes
-    p_xp(1:ns^lx+1)=0;
-    p_yp(1:ns^lx+1)=0;
-    p_yf(1:ns^(ly-lx)+1)=0;
-    p_ypf(1:ns^lx+1,1:ns^(ly-lx)+1)=0;
-    p_xyp(1:ns^lx+1,1:ns^lx+1)=0;
-    p_xypf(1:ns^lx+1,1:ns^lx+1,1:1:ns^(ly-lx)+1)=0;
-    %calculating phi_x, about the past of x
-    parfor node=1:nnodes
-        phislice=phi_x(:,node);
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            %temp_phi_x(n)=calcphi(n,tau,node,Sx,ns);
-            temp_phi=0;
-            k=n-lx;%running index for sum over tau-spaced elements
-            for i=n-tau*lx:tau:n-tau
-                temp_phi=temp_phi+Sx(k,node)*ns^((n-1)-k);
-                k=k+1;
-            end
-            phislice(n,node)=temp_phi;
-            %p_xp(temp_phi+1)=p_xp(temp_phi+1)+1;
-        end
-        phi_x(:,node)=phislice(:,node);
+% calculates the values of phi (symbolic words) and the probabilities used for CaMI and mutual information
+% At time n, the past words use the lx tau-spaced symbols before n,
+% S(n-tau*lx), ..., S(n-tau), and the future word the ly-lx tau-spaced
+% symbols from n on, S(n), ..., S(n+tau*(ly-lx-1)). Only times where all
+% words are complete are used, and every marginal is derived from the joint
+% distribution.
+    lf=ly-lx;
+    n=(tau*lx+1:tslen-tau*(lf-1))';
+    if isempty(n)
+        error('multithreadcami: time-series too short for the chosen L_past, L_fut and tau');
     end
-    %calculating phi_yp, about the past of y
-    parfor node=1:nnodes
-        phislice=phi_yp(:,node);
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            temp_phi=0;
-            k=n-lx;
-            for i=n-tau*lx:tau:n-tau
-                temp_phi=temp_phi+Sy(k,node)*ns^((n-1)-k);
-                k=k+1;
-            end
-            phislice(n,node)=temp_phi;
-        end
-        phi_yp(:,node)=phislice(:,node);
+    px=zeros(numel(n),nnodes);
+    py=zeros(numel(n),nnodes);
+    pf=zeros(numel(n),nnodes);
+    for k=lx:-1:1
+        px=px*ns+Sx(n-tau*k,:);
+        py=py*ns+Sy(n-tau*k,:);
     end
-    %calculating phi_yf, about the future of y
-    parfor node=1:nnodes
-        phislice=phi_yf(:,node);
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            temp_phi=0;
-            k=n;
-            for i=n:tau:n+tau*(ly-lx)-1
-                temp_phi=temp_phi+Sy(k,node)*ns^((n+(ly-lx)-1)-k);
-                k=k+1;
-            end
-            phislice(n,node)=temp_phi;
-        end
-        phi_yf(:,node)=phislice(:,node);
+    for k=0:lf-1
+        pf=pf*ns+Sy(n+tau*k,:);
     end
-    
-    %Calculate marginal probabilites
-    for node=1:nnodes
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            p_xp(phi_x(n,node)+1)=p_xp(phi_x(n,node)+1)+1;
-        end
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            p_yp(phi_yp(n,node)+1)=p_yp(phi_yp(n,node)+1)+1;
-        end
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            p_yf(phi_yf(n,node)+1)=p_yf(phi_yf(n,node)+1)+1;  
-        end
-    end
-    p_xp=p_xp/sum(p_xp);
-    p_yp=p_yp/sum(p_yp);
-    p_yf=p_yf/sum(p_yf);
-    %calculating joint probabilities
-    for node=1:nnodes
-        for n=tau*lx+1:tslen-tau*(ly-lx)
-            p_ypf(phi_yp(n,node)+1,phi_yf(n,node)+1)=p_ypf(phi_yp(n,node)+1,phi_yf(n,node)+1)+1;
-            p_xyp(phi_x(n,node)+1,phi_yp(n,node)+1)=p_xyp(phi_x(n,node)+1,phi_yp(n,node)+1)+1;
-            p_xypf(phi_x(n,node)+1,phi_yp(n,node)+1,phi_yf(n,node)+1)=p_xypf(phi_x(n,node)+1,phi_yp(n,node)+1,phi_yf(n,node)+1)+1;
-        end
-    end
-    p_ypf=p_ypf/sum(sum(p_ypf));
-    p_xyp=p_xyp/sum(sum(p_xyp));
-    p_xypf=p_xypf/sum(sum(sum(p_xypf)));
+    phi_x=NaN(tslen,nnodes);
+    phi_yp=NaN(tslen,nnodes);
+    phi_yf=NaN(tslen,nnodes);
+    phi_x(n,:)=px;
+    phi_yp(n,:)=py;
+    phi_yf(n,:)=pf;
+    %joint distribution of all trials and its marginals
+    p_xypf=accumarray([px(:) py(:) pf(:)]+1,1,[ns^lx,ns^lx,ns^lf])/numel(px);
+    p_xyp=sum(p_xypf,3);
+    p_ypf=reshape(sum(p_xypf,1),ns^lx,ns^lf);
+    p_xp=sum(p_xyp,2);
+    p_yp=sum(p_xyp,1)';
+    p_yf=sum(p_ypf,1)';
 end
 
 function [cami_xy,mutual_info,te_xy] = calcconfidence(x,y,lx,ly,xpart,ypart,tau,units,ns)
@@ -514,13 +432,4 @@ function []=printbottom(errcami,errmutual_info,errte,maxrun)
     dlmwrite('output.txt','If useful, please cite:','delimiter','','-append');
     dlmwrite('output.txt','(1) Arthur Valencio. An information-theoretical approach to identify seismic precursors and earthquake-causing variables. PhD thesis, University of Aberdeen, 2018. Available at: http://digitool.abdn.ac.uk:1801/webclient/DeliveryManager?pid=237105&custom_att_2=simple_viewer','delimiter','','-append');
     dlmwrite('output.txt','(2) Arthur Valencio, Norma Valencio and Murilo S. Baptista. Multithread causality: causality toolbox for systems observed through many short parallel experiments. Open source codes for Matlab. 2018. Available at: https://github.com/artvalencio/multithread-causality/','delimiter','','-append');
-end
-
-function phi=calcphi(n,tau,node,Sx,ns)
-            phi=0;
-            k=n-lx;%running index for sum over tau-spaced elements
-            for i=n-tau*lx:tau:n-tau
-                phi=phi+Sx(k,node)*ns^((n-1)-k);
-                k=k+1;
-            end
 end
