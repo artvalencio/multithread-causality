@@ -1,0 +1,6 @@
+global 1000x200 L=1/1 ns=2                0.089 s
+global 1000x200 L=3/2 ns=4                0.188 s
+global 1000x200 L=3/3 ns=10            FAILED: out of memory or dimension too large for Octave's index type
+confidence 20, 1000x200                   1.212 s
+local w=200, 1000x20 (800 windows)        1.451 s
+local w=200 L=2/1 ns=3, 1000x20           1.385 s
