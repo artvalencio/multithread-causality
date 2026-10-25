@@ -29,6 +29,55 @@ The confidence margin is a reference of what you would get by chance instead of 
 
 --------------------------------------------------
 
+*Usage
+
+    [cami_xy,cami_yx,mi,diridx,te_xy,te_yx,pointwise,confidence] = ...
+        multithreadcami(cause,effect,L_past,L_fut,cause_part,effect_part,tau,units,options...)
+
+Rows are time and columns are experiments. Options (name-value, in any order):
+
+- 'delay', d: pair cause(n) with effect(n+d) (d may be negative)
+- 'local', w: measures over sliding windows of w+1 points; 'step', s moves the window s points at a time
+- 'parallel', true/false: compute the 'local' windows with parfor (default true; serial without the Parallel Computing Toolbox and in GNU Octave). serialmultithreadcami(...) is the same as 'parallel', false
+- 'confidence', N: confidence margins from N runs with the cause shuffled within each experiment (8th output)
+- 'save': write output.txt and calculations.mat
+
+Units are 'bits' (or 'bit') and 'nats' (or 'nat'). Partition divisions must be increasing.
+
+The code runs in MATLAB and GNU Octave.
+
+*Tests
+
+    octave-cli --eval "cd tests; run_tests"     (or ./run_tests.sh)
+    matlab -batch "cd tests; run_tests"
+
+Reference values in tests/fixtures are computed with cami-python (multithread_causality), see tests/fixtures/make_fixtures.py.
+
+*Performance
+
+Timings in GNU Octave (benchmarks/run_benchmarks.m; before -> after):
+
+- 'local', 800 windows of 200 points, 20 experiments: 1.45 s -> 0.015 s
+- 'confidence', 20 runs, 1000 x 200: 1.21 s -> 0.35 s
+- global, 1000 x 200: ~3x faster
+- 10 symbols, L_past = 3, L_fut = 3: ran out of memory -> 0.38 s
+
+Measures are computed from counts of the observed symbolic words; pointwise
+tables are built only when that output is requested (for very large
+alphabets they list the observed cells).
+
+*Changes (2026)
+
+- options after the first one were ignored; unknown options are now reported
+- 'delay' did not shift the series (and negative delays broke matrices)
+- symbolic words with tau > 1 used consecutive points instead of tau-spaced ones, and the last tau points were never used as future words
+- the size check missed row mismatches; units are validated
+- 'save' failed (undefined variable; table not available in Octave)
+- confidence margins are now actually computed ('confidence', N)
+- one implementation for the parallel and serial versions, vectorized
+
+--------------------------------------------------
+
 (C) Dr Arthur Valencio[1,2]', Dr Norma Valencio[3]'' and Dr Murilo S. Baptista[1]
 
 [1] Institute for Complex Systems and Mathematical Biology (ICSMB), University of Aberdeen
