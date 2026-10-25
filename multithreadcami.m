@@ -181,20 +181,36 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
         effect=effect(1:end+delay,:);
     end
 
+    lf=ly-lx;
+    Sx=symbolize(cause,cause_part);
+    Sy=symbolize(effect,effect_part);
     if islocal   %Calculates for sliding window case ('local' measures (in time))
         starts=1:step:size(cause,1)-windowsize;
-        nw=numel(starts);
-        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx]=deal(zeros(1,nw));
-        pointwise=cell(1,nw);
-        if parallel
-            workers=Inf;
-        else
-            workers=0;
-        end
-        parfor (w=1:nw, workers)
-            t=starts(w);
-            [cami_xy(w),cami_yx(w),mutual_info(w),diridx(w),te_xy(w),te_yx(w),pointwise{w}] = ...
-                main(cause(t:t+windowsize,:),effect(t:t+windowsize,:),lx,ly,cause_part,effect_part,tau,units,ns,0);
+        if nargout>=7  %pointwise tables of every window: computed window by window
+            nw=numel(starts);
+            [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx]=deal(zeros(1,nw));
+            pointwise=cell(1,nw);
+            if parallel
+                workers=Inf;
+            else
+                workers=0;
+            end
+            parfor (w=1:nw, workers)
+                t=starts(w);
+                [cami_xy(w),cami_yx(w),mutual_info(w),diridx(w),te_xy(w),te_yx(w),pointwise{w}] = ...
+                    main(cause(t:t+windowsize,:),effect(t:t+windowsize,:),lx,ly,cause_part,effect_part,tau,units,ns,0,true);
+            end
+        else  %counts updated incrementally as the window slides
+            [cami_xy,cami_yx,mutual_info]=slidingwindows(Sx,Sy,lx,lf,tau,ns,windowsize,starts);
+            if strcmp(units,'bits')
+                cami_xy=cami_xy/log(2);
+                cami_yx=cami_yx/log(2);
+                mutual_info=mutual_info/log(2);
+            end
+            diridx=cami_xy-cami_yx;
+            te_xy=cami_xy-mutual_info;
+            te_yx=cami_yx-mutual_info;
+            pointwise=[];
         end
     else %Calculation over the whole time-series ('global' measures)
         disp('Calculating')
@@ -202,9 +218,9 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
             fflush(stdout);
         catch
         end
-        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput);
+        [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,saveoutput,nargout>=7,Sx,Sy);
         if nconfidence>0
-            confidence=confidencemargins(cause,effect,lx,ly,cause_part,effect_part,tau,units,ns,nconfidence);
+            confidence=confidencemargins(Sx,Sy,lx,lf,tau,ns,units,nconfidence,parallel);
             if saveoutput
                 printbottom(confidence);
             end
@@ -214,30 +230,57 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
 
 end
 
-function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,lx,ly,xpart,ypart,tau,units,ns,saveoutput)
+function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,lx,ly,xpart,ypart,tau,units,ns,saveoutput,wantpointwise,Sx,Sy)
 
-    nnodes=size(x,2);
-    tslen=size(x,1);
-    Sx=symbolize(x,xpart);
-    Sy=symbolize(y,ypart);
+    if nargin<12
+        Sx=symbolize(x,xpart);
+        Sy=symbolize(y,ypart);
+    end
+    lf=ly-lx;
+    nx=ns^lx;
+    nf=ns^lf;
 
-    %Mutual information and CaMI X->Y
-    [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes);
-    [mutual_info,pmi]=divergence(p_xyp,p_xp*p_yp');
-    [cami_xy,pcami_xy]=divergence(p_xypf,p_xp.*reshape(p_ypf,[1,size(p_ypf)]));
+    %symbolic words: the two directions share the past words
+    [a,b,c,n]=wordcodes(Sx,Sy,lx,lf,tau,ns);
+    cx=futurecodes(Sx,lf,tau,n,ns);
+    [hxy,txy]=entropies(a,b,c,nx,nx,nf);
+    [hyx,tyx]=entropies(b,a,cx,nx,nx,nf);
+    cami_xy=hxy.a+hxy.bc-hxy.abc;
+    mutual_info=hxy.a+hxy.b-hxy.ab;
+    cami_yx=hyx.a+hyx.bc-hyx.abc;
 
-    %CaMI Y->X
-    [ip_x,ip_yp,ip_yf,ip_ypf,ip_xyp,ip_xypf,iphi_x,iphi_yp,iphi_yf]=getprobabilities(Sy,Sx,lx,ly,ns,tau,tslen,nnodes);
-    [cami_yx,pcami_yx]=divergence(ip_xypf,ip_x.*reshape(ip_ypf,[1,size(ip_ypf)]));
+    %pointwise contributions (only when requested)
+    pointwise=[];
+    if wantpointwise || saveoutput
+        if ~isempty(txy)  %dense tables
+            [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf]=probtables(txy);
+            [ip_x,ip_yp,ip_yf,ip_ypf,ip_xyp,ip_xypf]=probtables(tyx);
+            [~,pmi]=divergence(p_xyp,p_xp*p_yp');
+            [~,pcami_xy]=divergence(p_xypf,p_xp.*reshape(p_ypf,[1,size(p_ypf)]));
+            [~,pcami_yx]=divergence(ip_xypf,ip_x.*reshape(ip_ypf,[1,size(ip_ypf)]));
+            pointwise.pmi=pmi;
+            pointwise.pcami_xy=pcami_xy;
+            pointwise.pcami_yx=pcami_yx;
+            pointwise.pdiridx=pcami_xy-pcami_yx;
+            pointwise.pte_xy=pcami_xy-pmi;
+            pointwise.pte_yx=pcami_yx-pmi;
+        else  %alphabet too large for dense tables: lists of the observed cells
+            pointwise=sparsepointwise(a,b,c,cx,nx,nf);
+        end
+    end
 
     %Adjusting units
     if strcmp(units,'nats')==0
         mutual_info=mutual_info/log(2);
         cami_xy=cami_xy/log(2);
         cami_yx=cami_yx/log(2);
-        pmi=pmi/log(2);
-        pcami_xy=pcami_xy/log(2);
-        pcami_yx=pcami_yx/log(2);
+        if isstruct(pointwise)
+            for name=fieldnames(pointwise)'
+                if isempty(regexp(name{1},'cells$','once'))
+                    pointwise.(name{1})=pointwise.(name{1})/log(2);
+                end
+            end
+        end
     end
 
     %Obtaining remaining outputs
@@ -245,16 +288,12 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
     te_xy=cami_xy-mutual_info;
     te_yx=cami_yx-mutual_info;
 
-    %Generating struct of pointwise informational measures
-    pointwise.pmi=pmi;
-    pointwise.pcami_xy=pcami_xy;
-    pointwise.pcami_yx=pcami_yx;
-    pointwise.pdiridx=pcami_xy-pcami_yx;
-    pointwise.pte_xy=pcami_xy-pmi;
-    pointwise.pte_yx=pcami_yx-pmi;
-
     %print calculations to file
     if saveoutput
+        tslen=size(Sx,1);
+        [phi_x,phi_yp,phi_yf,iphi_x,iphi_yp,iphi_yf]=deal(NaN(tslen,size(Sx,2)));
+        phi_x(n,:)=a; phi_yp(n,:)=b; phi_yf(n,:)=c;
+        iphi_x(n,:)=b; iphi_yp(n,:)=a; iphi_yf(n,:)=cx;
         timeseries=struct('x',x,'y',y,'Sx',Sx,'Sy',Sy,'phi_x',phi_x,'phi_yp',phi_yp,'phi_yf',phi_yf,...
             'inv_phi_y',iphi_x,'inv_phi_xp',iphi_yp,'inv_phi_xf',iphi_yf);
         initialparameters=struct('resolution',ns,'symbol_x_length',lx,'symbol_y_length',ly,...
@@ -281,22 +320,271 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise] = main(x,y,l
         fprintf(fid,'-----------------------------------\n');
         fprintf(fid,'**Probability boxes and timeseries can be seen in calculations.mat**\n');
         fclose(fid);
-        save('calculations.mat','timeseries','initialparameters','cami_xy',...
-            'cami_yx','diridx','mutual_info','te_xy','te_yx','p_xp','p_yp','p_yf','p_ypf',...
-            'p_xyp','p_xypf','ip_x','ip_yp','ip_yf','ip_ypf','ip_xyp','ip_xypf','-v7');
+        if ~isempty(txy)
+            save('calculations.mat','timeseries','initialparameters','cami_xy',...
+                'cami_yx','diridx','mutual_info','te_xy','te_yx','p_xp','p_yp','p_yf','p_ypf',...
+                'p_xyp','p_xypf','ip_x','ip_yp','ip_yf','ip_ypf','ip_xyp','ip_xypf','pointwise','-v7');
+        else
+            save('calculations.mat','timeseries','initialparameters','cami_xy',...
+                'cami_yx','diridx','mutual_info','te_xy','te_yx','pointwise','-v7');
+        end
     end
 end
 
 
 function S=symbolize(data,part)
 % Symbol i-1 is given to values in [part(i-1), part(i)); divisions must be increasing.
+% Symbols are stored compactly (uint8 for up to 256 symbols).
     if any(diff(part(:))<0)
         error('multithreadcami: partition divisions must be in increasing order');
     end
-    S=zeros(size(data));
+    if numel(part)<256
+        S=zeros(size(data),'uint8');
+    else
+        S=zeros(size(data));
+    end
     for i=1:numel(part)
         S=S+(data>=part(i));
     end
+end
+
+
+function [a,b,c,n]=wordcodes(Sc,Se,lx,lf,tau,ns)
+% Past words of the cause (a) and of the effect (b) and future words of the
+% effect (c), at the times n where all of them are complete. At time n the
+% past words use S(n-tau*lx), ..., S(n-tau) and the future word S(n), ...,
+% S(n+tau*(lf-1)). Rows are times, columns are experiments.
+    n=(tau*lx+1:size(Sc,1)-tau*(lf-1))';
+    if isempty(n)
+        error('multithreadcami: time-series too short for the chosen L_past, L_fut and tau');
+    end
+    a=pastcodes(Sc,lx,tau,n,ns);
+    b=pastcodes(Se,lx,tau,n,ns);
+    c=futurecodes(Se,lf,tau,n,ns);
+end
+
+
+function p=pastcodes(S,L,tau,n,ns)
+    p=zeros(numel(n),size(S,2));
+    for k=L:-1:1
+        p=p*ns+double(S(n-tau*k,:));
+    end
+end
+
+
+function f=futurecodes(S,L,tau,n,ns)
+    f=zeros(numel(n),size(S,2));
+    for k=0:L-1
+        f=f*ns+double(S(n+tau*k,:));
+    end
+end
+
+
+function dense=usedense(cells,nsamples)
+% dense tables when the joint alphabet is not much larger than the data
+    dense=cells<=max(2*nsamples,2^20);
+end
+
+
+function h=entropyofcounts(counts)
+% plug-in entropy (nats) of a vector of counts
+    counts=counts(counts>0);
+    p=counts/sum(counts);
+    h=-sum(p.*log(p));
+end
+
+
+function [h,table]=entropies(a,b,c,na,nb,nc)
+% Entropies (nats) H(a), H(b), H(a,b), H(b,c), H(a,b,c) of the joint words,
+% all derived from one count; table holds the dense counts (empty if sparse).
+    key=(a(:)*nb+b(:))*nc+c(:);
+    if na*nb*nc>=2^53
+        error('multithreadcami: too many symbolic words (ns^(2*L_past+L_fut) >= 2^53)');
+    end
+    table=[];
+    if usedense(na*nb*nc,numel(key))
+        table=reshape(accumarray(key+1,1,[na*nb*nc,1]),[nc,nb,na]);  %index (c+1,b+1,a+1)
+        nab=sum(table,1);
+        h.abc=entropyofcounts(table(:));
+        h.ab=entropyofcounts(nab(:));
+        h.bc=entropyofcounts(reshape(sum(table,3),[],1));
+        h.a=entropyofcounts(reshape(sum(nab,2),[],1));
+        h.b=entropyofcounts(reshape(sum(nab,3),[],1));
+    else
+        [u,~,j]=unique(key);
+        counts=accumarray(j(:),1);
+        ua=floor(u/(nb*nc));
+        ubc=u-ua*(nb*nc);
+        ub=floor(ubc/nc);
+        h.abc=entropyofcounts(counts);
+        h.ab=entropyofcounts(groupcounts(ua*nb+ub,counts));
+        h.bc=entropyofcounts(groupcounts(ubc,counts));
+        h.a=entropyofcounts(groupcounts(ua,counts));
+        h.b=entropyofcounts(groupcounts(ub,counts));
+    end
+end
+
+
+function g=groupcounts(subkeys,counts)
+% counts summed over cells sharing the same sub-key
+    [~,~,j]=unique(subkeys);
+    g=accumarray(j(:),counts(:));
+end
+
+
+function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf]=probtables(table)
+% probability tables, indexed (a+1, b+1, c+1), from dense counts indexed (c+1, b+1, a+1)
+    p_xypf=permute(table,[3 2 1])/sum(table(:));
+    p_xyp=sum(p_xypf,3);
+    p_ypf=reshape(sum(p_xypf,1),size(p_xypf,2),size(p_xypf,3));
+    p_xp=sum(p_xyp,2);
+    p_yp=sum(p_xyp,1)';
+    p_yf=sum(p_ypf,1)';
+end
+
+
+function pointwise=sparsepointwise(a,b,c,cx,nx,nf)
+% Pointwise terms (nats) for alphabets too large for dense tables: one entry per
+% observed cell. cells(k,:) = [past x word, past y word, future y word] (0-based codes);
+% pcami_xy(k) is the term p*log(p/(p_a*p_bc)) of that cell; pmi lists the terms of the
+% observed (past x, past y) cells mi_cells. pcami_yx lists the Y->X terms of the cells
+% [past y, past x, future x] in yx_cells.
+    [pointwise.cells,pointwise.pcami_xy]=cellterms(a,b,c,nx,nf);
+    [pointwise.yx_cells,pointwise.pcami_yx]=cellterms(b,a,cx,nx,nf);
+    key=a(:)*nx+b(:);
+    [u,~,j]=unique(key);
+    counts=accumarray(j(:),1);
+    total=numel(key);
+    ua=floor(u/nx);
+    ub=u-ua*nx;
+    na=groupcounts(ua,counts);
+    nb=groupcounts(ub,counts);
+    [~,~,ja]=unique(ua);
+    [~,~,jb]=unique(ub);
+    p=counts/total;
+    pointwise.mi_cells=[ua ub];
+    pointwise.pmi=p.*log(p./((na(ja)/total).*(nb(jb)/total)));
+end
+
+
+function [cells,terms]=cellterms(a,b,c,nx,nf)
+    key=(a(:)*nx+b(:))*nf+c(:);
+    [u,~,j]=unique(key);
+    counts=accumarray(j(:),1);
+    total=numel(key);
+    ua=floor(u/(nx*nf));
+    ubc=u-ua*(nx*nf);
+    ub=floor(ubc/nf);
+    uc=ubc-ub*nf;
+    [~,~,ja]=unique(ua);
+    [~,~,jbc]=unique(ubc);
+    na=accumarray(ja(:),counts);
+    nbc=accumarray(jbc(:),counts);
+    p=counts/total;
+    cells=[ua ub uc];
+    terms=p.*log(p./((na(ja)/total).*(nbc(jbc)/total)));
+end
+
+
+function [cami_xy,cami_yx,mutual_info]=slidingwindows(Sx,Sy,lx,lf,tau,ns,windowsize,starts)
+% Measures (nats) over windows of windowsize+1 rows starting at starts. Words are
+% computed once; each sample is mapped to a compact cell index, and the counts of
+% each window are obtained from the previous window's by removing the rows that
+% leave and adding the rows that enter.
+    nx=ns^lx;
+    nf=ns^lf;
+    [a,b,c,n]=wordcodes(Sx,Sy,lx,lf,tau,ns);
+    cx=futurecodes(Sx,lf,tau,n,ns);
+    rowsperwindow=windowsize+1-tau*lx-tau*(lf-1);  %complete words inside one window
+    if rowsperwindow<1
+        error('multithreadcami: window too short for the chosen L_past, L_fut and tau');
+    end
+    xy=cellmaps(a,b,c,nx,nf);
+    yx=cellmaps(b,a,cx,nx,nf);
+    nw=numel(starts);
+    nrows=size(a,1);
+    if max(xy.ncells,yx.ncells)*(nrows+1)<=2^22
+        %all windows at once: cumulative counts of every cell along time, and window
+        %counts as differences of two columns
+        lo=starts;
+        hi=starts+rowsperwindow-1;
+        total=rowsperwindow*size(a,2);
+        exy=allwindowentropies(xy,nrows,lo,hi,total);
+        eyx=allwindowentropies(yx,nrows,lo,hi,total);
+        cami_xy=exy.a+exy.bc-exy.abc;
+        cami_yx=eyx.a+eyx.bc-eyx.abc;
+        mutual_info=exy.a+exy.b-exy.ab;
+        return
+    end
+    [cami_xy,cami_yx,mutual_info]=deal(zeros(1,nw));
+    for w=1:nw
+        rows=starts(w):starts(w)+rowsperwindow-1;  %row r of the word arrays is time n=r+tau*lx
+        if w==1 || starts(w)-starts(w-1)>=rowsperwindow
+            xy.counts=accumarray(reshape(xy.cell(rows,:),[],1),1,[xy.ncells,1]);
+            yx.counts=accumarray(reshape(yx.cell(rows,:),[],1),1,[yx.ncells,1]);
+        else
+            leaving=starts(w-1):starts(w)-1;
+            entering=rows(end)-numel(leaving)+1:rows(end);
+            xy.counts=xy.counts-accumarray(reshape(xy.cell(leaving,:),[],1),1,[xy.ncells,1]) ...
+                               +accumarray(reshape(xy.cell(entering,:),[],1),1,[xy.ncells,1]);
+            yx.counts=yx.counts-accumarray(reshape(yx.cell(leaving,:),[],1),1,[yx.ncells,1]) ...
+                               +accumarray(reshape(yx.cell(entering,:),[],1),1,[yx.ncells,1]);
+        end
+        [hxy,hxy_ab,hxy_b]=windowentropies(xy);
+        hyx=windowentropies(yx);
+        cami_xy(w)=hxy.a+hxy.bc-hxy.abc;
+        cami_yx(w)=hyx.a+hyx.bc-hyx.abc;
+        mutual_info(w)=hxy.a+hxy_b-hxy_ab;
+    end
+end
+
+
+function e=allwindowentropies(m,nrows,lo,hi,total)
+% entropies (nats) of every window [lo(w), hi(w)] of rows, from cumulative counts
+    rows=repmat((1:nrows)',1,size(m.cell,2));
+    perrow=accumarray([m.cell(:) rows(:)],1,[m.ncells,nrows]);
+    cumulative=[zeros(m.ncells,1) cumsum(perrow,2)];
+    counts=cumulative(:,hi+1)-cumulative(:,lo);  %cells x windows
+    group=@(g) sparse(g(:),(1:m.ncells)',1,max(g),m.ncells)*counts;
+    e.abc=columnentropy(counts,total);
+    e.a=columnentropy(group(m.a),total);
+    e.b=columnentropy(group(m.b),total);
+    e.ab=columnentropy(group(m.ab),total);
+    e.bc=columnentropy(group(m.bc),total);
+end
+
+
+function h=columnentropy(counts,total)
+% plug-in entropy (nats) of each column of counts
+    counts=full(counts);
+    terms=counts.*log(counts);
+    terms(counts==0)=0;
+    h=log(total)-sum(terms,1)/total;
+end
+
+
+function m=cellmaps(a,b,c,nx,nf)
+% compact cell index of every sample, and each cell's marginal groups
+    key=(a*nx+b)*nf+c;
+    [u,~,j]=unique(key(:));
+    m.cell=reshape(j,size(key));
+    m.ncells=numel(u);
+    ua=floor(u/(nx*nf));
+    ubc=u-ua*(nx*nf);
+    ub=floor(ubc/nf);
+    [~,~,m.a]=unique(ua);
+    [~,~,m.b]=unique(ub);
+    [~,~,m.ab]=unique(ua*nx+ub);
+    [~,~,m.bc]=unique(ubc);
+end
+
+
+function [h,hab,hb]=windowentropies(m)
+    h.abc=entropyofcounts(m.counts);
+    h.a=entropyofcounts(accumarray(m.a(:),m.counts));
+    h.bc=entropyofcounts(accumarray(m.bc(:),m.counts));
+    hab=entropyofcounts(accumarray(m.ab(:),m.counts));
+    hb=entropyofcounts(accumarray(m.b(:),m.counts));
 end
 
 
@@ -309,54 +597,32 @@ function [total,terms]=divergence(p_joint,p_indep)
 end
 
 
-function [p_xp,p_yp,p_yf,p_ypf,p_xyp,p_xypf,phi_x,phi_yp,phi_yf]=getprobabilities(Sx,Sy,lx,ly,ns,tau,tslen,nnodes)
-% calculates the values of phi (symbolic words) and the probabilities used for CaMI and mutual information
-% At time n, the past words use the lx tau-spaced symbols before n,
-% S(n-tau*lx), ..., S(n-tau), and the future word the ly-lx tau-spaced
-% symbols from n on, S(n), ..., S(n+tau*(ly-lx-1)). Only times where all
-% words are complete are used, and every marginal is derived from the joint
-% distribution.
-    lf=ly-lx;
-    n=(tau*lx+1:tslen-tau*(lf-1))';
-    if isempty(n)
-        error('multithreadcami: time-series too short for the chosen L_past, L_fut and tau');
-    end
-    px=zeros(numel(n),nnodes);
-    py=zeros(numel(n),nnodes);
-    pf=zeros(numel(n),nnodes);
-    for k=lx:-1:1
-        px=px*ns+Sx(n-tau*k,:);
-        py=py*ns+Sy(n-tau*k,:);
-    end
-    for k=0:lf-1
-        pf=pf*ns+Sy(n+tau*k,:);
-    end
-    phi_x=NaN(tslen,nnodes);
-    phi_yp=NaN(tslen,nnodes);
-    phi_yf=NaN(tslen,nnodes);
-    phi_x(n,:)=px;
-    phi_yp(n,:)=py;
-    phi_yf(n,:)=pf;
-    %joint distribution of all trials and its marginals
-    p_xypf=accumarray([px(:) py(:) pf(:)]+1,1,[ns^lx,ns^lx,ns^lf])/numel(px);
-    p_xyp=sum(p_xypf,3);
-    p_ypf=reshape(sum(p_xypf,1),ns^lx,ns^lf);
-    p_xp=sum(p_xyp,2);
-    p_yp=sum(p_xyp,1)';
-    p_yf=sum(p_ypf,1)';
-end
-
-function confidence = confidencemargins(cause,effect,lx,ly,xpart,ypart,tau,units,ns,nruns)
+function confidence = confidencemargins(Sx,Sy,lx,lf,tau,ns,units,nruns,parallel)
 % Largest CaMI, mutual information and transfer entropy X->Y obtained when the
 % time order of the cause is shuffled within every experiment (nruns times).
+% With fixed partitions, shuffling the data shuffles its symbols, and the
+% effect's words do not change between runs.
+    nx=ns^lx;
+    nf=ns^lf;
+    [~,b,c,n]=wordcodes(Sx,Sy,lx,lf,tau,ns);
     margins=zeros(nruns,3);
-    for run=1:nruns
-        shuffled=cause;
-        for node=1:size(cause,2)
-            shuffled(:,node)=cause(randperm(size(cause,1)),node);
+    if parallel
+        workers=Inf;
+    else
+        workers=0;
+    end
+    parfor (run=1:nruns, workers)
+        shuffled=Sx;
+        for node=1:size(Sx,2)
+            shuffled(:,node)=Sx(randperm(size(Sx,1)),node);
         end
-        [cami_xy,~,mutual_info,~,te_xy]=main(shuffled,effect,lx,ly,xpart,ypart,tau,units,ns,0);
-        margins(run,:)=[cami_xy,mutual_info,te_xy];
+        h=entropies(pastcodes(shuffled,lx,tau,n,ns),b,c,nx,nx,nf);
+        cami=h.a+h.bc-h.abc;
+        mi=h.a+h.b-h.ab;
+        margins(run,:)=[cami,mi,cami-mi];
+    end
+    if strcmp(units,'bits')
+        margins=margins/log(2);
     end
     confidence=struct('cami_xy',max(margins(:,1)),'mutual_info',max(margins(:,2)),...
         'te_xy',max(margins(:,3)),'runs',nruns);
