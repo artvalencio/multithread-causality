@@ -47,10 +47,12 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
 %                        each experiment (not available with 'local')
 %               'step', followed by value (positive integer): with 'local', move
 %                        the window by this many points (default 1)
-%               'parallel', followed by true/false: compute the 'local'
-%                        windows in parallel with parfor (default true;
-%                        runs serially without the Parallel Computing
-%                        Toolbox and in GNU Octave)
+%               'parallel', followed by true/false: use parfor for the
+%                        'confidence' runs and, when pointwise outputs are
+%                        requested, for the 'local' windows (default true;
+%                        serial without the Parallel Computing Toolbox and in
+%                        GNU Octave). Without pointwise outputs, all 'local'
+%                        windows are computed together from cumulative counts.
 %--------------------------------------------------------
 % Outputs:
 %           cami_xy: Causal Mutual Information x -> y
@@ -62,7 +64,10 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
 %                    positive if flow of information is x -> y
 %           te_xy:   Transfer Entropy x -> y
 %           te_yx:   Transfer Entropy y -> x
-%           pointwise: Struct with pointwise information measures
+%           pointwise: Struct with pointwise information measures (only
+%                    computed when requested). For alphabets too large for
+%                    dense tables it lists the observed cells: cells (word
+%                    codes), pcami_xy, yx_cells, pcami_yx, mi_cells, pmi.
 %           confidence: with 'confidence', struct with the margins
 %                    (fields cami_xy, mutual_info, te_xy, runs); else []
 %

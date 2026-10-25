@@ -53,6 +53,19 @@ The code runs in MATLAB and GNU Octave.
 
 Reference values in tests/fixtures are computed with cami-python (multithread_causality), see tests/fixtures/make_fixtures.py.
 
+*Performance
+
+Timings in GNU Octave (benchmarks/run_benchmarks.m; before -> after):
+
+- 'local', 800 windows of 200 points, 20 experiments: 1.45 s -> 0.015 s
+- 'confidence', 20 runs, 1000 x 200: 1.21 s -> 0.35 s
+- global, 1000 x 200: ~3x faster
+- 10 symbols, L_past = 3, L_fut = 3: ran out of memory -> 0.38 s
+
+Measures are computed from counts of the observed symbolic words; pointwise
+tables are built only when that output is requested (for very large
+alphabets they list the observed cells).
+
 *Changes (2026)
 
 - options after the first one were ignored; unknown options are now reported
