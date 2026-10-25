@@ -101,6 +101,7 @@ function [cami_xy,cami_yx,mutual_info,diridx,te_xy,te_yx,pointwise,confidence]..
 %--------------------------------------------------------
 %Original: 19 June 2018
 %Update: 07 July 2019
+%Update: October 2026 (bug fixes, options, confidence margins, tests)
 %--------------------------------------------------------
 %If useful please cite
 %(1) Arthur Valencio. An information-theoretical approach to identify seismic precursors and earthquake-causing variables. PhD thesis, University of Aberdeen, 2018. Available at: http://digitool.abdn.ac.uk:1801/webclient/DeliveryManager?pid=237105&custom_att_2=simple_viewer
